@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Windows.UI.Popups;
 using Windows.UI.Xaml.Navigation;
+using Google.Protobuf;
 using Newtonsoft.Json;
 using PokemonGo.RocketAPI;
 using PokemonGo_UWP.Entities;
@@ -16,8 +17,8 @@ using POGOProtos.Map.Pokemon;
 using POGOProtos.Networking.Responses;
 using Template10.Mvvm;
 using Template10.Services.NavigationService;
-using Universal_Authenticator_v2.Views;
 using Resources = PokemonGo_UWP.Utils.Resources;
+using POGOProtos.Settings.Master;
 
 namespace PokemonGo_UWP.ViewModels
 {
@@ -30,7 +31,7 @@ namespace PokemonGo_UWP.ViewModels
 
         public CapturePokemonPageViewModel()
         {
-            SelectStartingBall();
+            SelectedCaptureItem = SelectAvailablePokeBall();
         }
 
         #endregion
@@ -45,7 +46,7 @@ namespace PokemonGo_UWP.ViewModels
         {
             if (CurrentPokemon is MapPokemonWrapper)
             {
-                CurrentEncounter = await GameClient.EncounterPokemon(CurrentPokemon.EncounterId, CurrentPokemon.SpawnpointId);                
+                CurrentEncounter = await GameClient.EncounterPokemon(CurrentPokemon.EncounterId, CurrentPokemon.SpawnpointId);
                 switch (CurrentEncounter.Status)
                 {
                     case EncounterResponse.Types.Status.PokemonInventoryFull:
@@ -68,7 +69,7 @@ namespace PokemonGo_UWP.ViewModels
                 }
             }
             else
-            {                
+            {
                 CurrentLureEncounter = await GameClient.EncounterLurePokemon(CurrentPokemon.EncounterId, CurrentPokemon.SpawnpointId);
                 CurrentEncounter = new EncounterResponse()
                 {
@@ -86,9 +87,9 @@ namespace PokemonGo_UWP.ViewModels
                         break;
                     case DiskEncounterResponse.Types.Result.Success:
                         break;
-                    case DiskEncounterResponse.Types.Result.Unknown:                                      
-                    case DiskEncounterResponse.Types.Result.NotAvailable:                        
-                    case DiskEncounterResponse.Types.Result.NotInRange:                        
+                    case DiskEncounterResponse.Types.Result.Unknown:
+                    case DiskEncounterResponse.Types.Result.NotAvailable:
+                    case DiskEncounterResponse.Types.Result.NotInRange:
                     case DiskEncounterResponse.Types.Result.EncounterAlreadyFinished:
                         await new MessageDialog(Resources.CodeResources.GetString("PokemonRanAwayText")).ShowAsyncQueue();
                         ReturnToGameScreen.Execute();
@@ -97,7 +98,8 @@ namespace PokemonGo_UWP.ViewModels
                         throw new ArgumentOutOfRangeException();
                 }
             }
-            SelectStartingBall();
+            PokemonExtraData = GameClient.GetExtraDataForPokemon(CurrentPokemon.PokemonId);
+            SelectedCaptureItem = SelectAvailablePokeBall();
             Busy.SetBusy(false);
         }
 
@@ -112,11 +114,15 @@ namespace PokemonGo_UWP.ViewModels
             if (suspensionState.Any())
             {
                 // Recovering the state
+                CurrentEncounter = new EncounterResponse();
+                CurrentLureEncounter = new DiskEncounterResponse();
+                CurrentCaptureAward = new CaptureAward();
+                SelectedCaptureItem = new ItemData();
                 CurrentPokemon = JsonConvert.DeserializeObject<IMapPokemon>((string) suspensionState[nameof(CurrentPokemon)]);
-                CurrentEncounter = JsonConvert.DeserializeObject<EncounterResponse>((string) suspensionState[nameof(CurrentEncounter)]);
-                CurrentLureEncounter = JsonConvert.DeserializeObject<DiskEncounterResponse>((string) suspensionState[nameof(CurrentLureEncounter)]);
-                CurrentCaptureAward = JsonConvert.DeserializeObject<CaptureAward>((string) suspensionState[nameof(CurrentCaptureAward)]);
-                SelectedCaptureItem = JsonConvert.DeserializeObject<ItemData>((string) suspensionState[nameof(SelectedCaptureItem)]);
+                CurrentEncounter.MergeFrom(ByteString.FromBase64((string)suspensionState[nameof(CurrentEncounter)]).CreateCodedInput());
+                CurrentLureEncounter.MergeFrom(ByteString.FromBase64((string)suspensionState[nameof(CurrentLureEncounter)]).CreateCodedInput());
+                CurrentCaptureAward.MergeFrom(ByteString.FromBase64((string)suspensionState[nameof(CurrentCaptureAward)]).CreateCodedInput());
+                SelectedCaptureItem.MergeFrom(ByteString.FromBase64((string)suspensionState[nameof(SelectedCaptureItem)]).CreateCodedInput());
             }
             else
             {
@@ -140,10 +146,10 @@ namespace PokemonGo_UWP.ViewModels
             if (suspending)
             {
                 suspensionState[nameof(CurrentPokemon)] = JsonConvert.SerializeObject(CurrentPokemon);
-                suspensionState[nameof(CurrentEncounter)] = JsonConvert.SerializeObject(CurrentEncounter);
-                suspensionState[nameof(CurrentLureEncounter)] = JsonConvert.SerializeObject(CurrentLureEncounter);
-                suspensionState[nameof(CurrentCaptureAward)] = JsonConvert.SerializeObject(CurrentCaptureAward);
-                suspensionState[nameof(SelectedCaptureItem)] = JsonConvert.SerializeObject(SelectedCaptureItem);
+                suspensionState[nameof(CurrentEncounter)] = CurrentEncounter.ToByteString().ToBase64();
+                suspensionState[nameof(CurrentLureEncounter)] = CurrentLureEncounter.ToByteString().ToBase64();
+                suspensionState[nameof(CurrentCaptureAward)] = CurrentCaptureAward.ToByteString().ToBase64();
+                suspensionState[nameof(SelectedCaptureItem)] = SelectedCaptureItem.ToByteString().ToBase64();
             }
             await Task.CompletedTask;
         }
@@ -157,6 +163,11 @@ namespace PokemonGo_UWP.ViewModels
         #endregion
 
         #region Game Management Vars
+
+        /// <summary>
+        /// Pokedex data for the current Pokemon
+        /// </summary>
+        private PokemonSettings _pokemonExtraData;
 
         /// <summary>
         ///     Pokemon that we're trying to capture
@@ -237,6 +248,15 @@ namespace PokemonGo_UWP.ViewModels
             set { Set(ref _currentCaptureAward, value); }
         }
 
+        /// <summary>
+        /// Pokedex data for the current Pokemon
+        /// </summary>
+        public PokemonSettings PokemonExtraData
+        {
+            get { return _pokemonExtraData; }
+            set { Set(ref _pokemonExtraData, value); }
+        }
+
         #endregion
 
         #region Game Logic
@@ -248,7 +268,23 @@ namespace PokemonGo_UWP.ViewModels
         /// <summary>
         ///     Going back to map page
         /// </summary>
-        public DelegateCommand ReturnToGameScreen => _returnToGameScreen ?? (_returnToGameScreen = new DelegateCommand(() => { NavigationService.Navigate(typeof(GameMapPage), GameMapNavigationModes.PokemonUpdate); }, () => true));
+        public DelegateCommand ReturnToGameScreen => _returnToGameScreen ?? (_returnToGameScreen = new DelegateCommand(
+                                                         () =>
+                                                         {
+                                                             var currentPokemon =
+                                                                 GameClient.PokemonsInventory
+                                                                 .FirstOrDefault(item => item.Id == _capturedPokemonId);
+                                                             if (currentPokemon != null)
+                                                             {
+                                                                 NavigationHelper.NavigationState["CurrentPokemon"] =
+                                                                     new PokemonDataWrapper(currentPokemon);
+                                                                 NavigationService.Navigate(typeof(PokemonDetailPage));
+                                                             }
+                                                             else
+                                                             {
+                                                                 NavigationService.Navigate(typeof(GameMapPage), GameMapNavigationModes.PokemonUpdate);
+                                                             }
+                                                         }, () => true));
 
         private DelegateCommand _escapeEncounterCommand;
 
@@ -290,93 +326,94 @@ namespace PokemonGo_UWP.ViewModels
 
         #endregion
 
-        /// <summary>
-        /// Selects the first ball based on available items
-        /// </summary>
-        private void SelectStartingBall(bool keepPreviousSelection = false)
+        /// <summary>Selects the first available pokeball type</summary>
+        /// <returns>Available pokeball type or default with count 0</returns>
+        public ItemData SelectAvailablePokeBall()
         {
-            // Set default item (switch to other balls if user has none)
-            if (!keepPreviousSelection)
-            {
-                SelectedCaptureItem = ItemsInventory.First(item => item.ItemId == ItemId.ItemPokeBall) ?? new ItemData
-                {
-                    Count = 0, ItemId = ItemId.ItemPokeBall
-                };
-            }
-            else
-            {
-                // Start with a ball of the same type as the one that's currently used
-                SelectedCaptureItem = ItemsInventory.First(item => item.ItemId == SelectedCaptureItem.ItemId);
-            }
-            while (SelectedCaptureItem != null && SelectedCaptureItem.Count == 0)
-            {
-                switch (SelectedCaptureItem.ItemId)
-                {
-                    case ItemId.ItemPokeBall:
-                        // Try with Greatball
-                        SelectedCaptureItem = ItemsInventory.FirstOrDefault(item => item.ItemId == ItemId.ItemGreatBall);
-                        if (SelectedCaptureItem == null) {
-                            SelectedCaptureItem = new ItemData() {
-                                Count = 0,
-                                ItemId = ItemId.ItemGreatBall
-                            };
-                        }
-                        break;
-                    case ItemId.ItemGreatBall:
-                        // Try with Ultraball
-                        SelectedCaptureItem = ItemsInventory.FirstOrDefault(item => item.ItemId == ItemId.ItemUltraBall);
-                        if(SelectedCaptureItem == null) {
-                            SelectedCaptureItem = new ItemData() {
-                                Count = 0,
-                                ItemId = ItemId.ItemUltraBall
-                            };
-                        }
-                        break;
-                    case ItemId.ItemUltraBall:
-                        // Try with Masterball
-                        SelectedCaptureItem = ItemsInventory.FirstOrDefault(item => item.ItemId == ItemId.ItemMasterBall);
-                        if(SelectedCaptureItem == null) {
-                            SelectedCaptureItem = new ItemData() {
-                                Count = 0,
-                                ItemId = ItemId.ItemMasterBall
-                            };
-                        }
-                        break;
-                    case ItemId.ItemMasterBall:
-                        // User has no left balls, choose a non-existing Pokeball to stop him from trying to capture
-                        SelectedCaptureItem = new ItemData
-                        {
-                            Count = 0,
-                            ItemId = ItemId.ItemPokeBall
-                        };
-                        return;
-                }
-            }
+            var pokeball = SelectPokeballType(ItemId.ItemPokeBall);
+            if(pokeball != null && pokeball.Count != 0)
+                return pokeball;
+
+            var greatball = SelectPokeballType(ItemId.ItemGreatBall);
+            if (greatball != null && greatball.Count != 0)
+                return greatball;
+
+            var ultraball = SelectPokeballType(ItemId.ItemUltraBall);
+            if (ultraball != null && ultraball.Count != 0)
+                return ultraball;
+
+            var masterball = SelectPokeballType(ItemId.ItemMasterBall);
+            if (masterball != null && masterball.Count != 0)
+                return masterball;
+
+            var fallback = new ItemData {Count = 0, ItemId = ItemId.ItemPokeBall};
+            return fallback;
+        }
+
+        /// <summary>Selects the pokeball type from Inventory</summary>
+        /// <param name="itemId">The item identifier</param>
+        /// <returns>Found balls or null</returns>
+        private ItemData SelectPokeballType(ItemId? itemId)
+        {
+            if (itemId == null)
+                return null;
+
+            return ItemsInventory?.FirstOrDefault(item => item.ItemId == itemId);
         }
 
         private DelegateCommand<bool> _useSelectedCaptureItem;
+        public ItemId? LastItemUsed;
+
+        private bool _pokeballButtonEnabled;
+        public bool PokeballButtonEnabled
+        {
+            get { return _pokeballButtonEnabled; }
+            set { Set(ref _pokeballButtonEnabled, value); }
+        }
 
         /// <summary>
         ///     We throw the selected item to the Pokemon and see what happens
         /// </summary>
         public DelegateCommand<bool> UseSelectedCaptureItem => _useSelectedCaptureItem ?? (_useSelectedCaptureItem = new DelegateCommand<bool>(async hitPokemon =>
         {
+            LastItemUsed = SelectedCaptureItem.ItemId;
             Logger.Write($"Launched {SelectedCaptureItem} at {CurrentPokemon.PokemonId}");
             if (SelectedCaptureItem.ItemId == ItemId.ItemPokeBall || SelectedCaptureItem.ItemId == ItemId.ItemGreatBall || SelectedCaptureItem.ItemId == ItemId.ItemMasterBall || SelectedCaptureItem.ItemId == ItemId.ItemUltraBall)
             {
+                PokeballButtonEnabled = false;
+                Busy.SetBusy(true);
                 // Player's using a PokeBall so we try to catch the Pokemon
                 await ThrowPokeball(hitPokemon);
+
+                // We always need to update the inventory
+                await GameClient.UpdateInventory();
+                SelectedCaptureItem = SelectPokeballType(LastItemUsed) ?? SelectAvailablePokeBall();
+
+                Busy.SetBusy(false);
             }
             else
             {
+                //So that after using berry pokeball is immediatelly rendered
+                SelectedCaptureItem = SelectAvailablePokeBall();
+
+                PokeballButtonEnabled = false;
+                Busy.SetBusy(true);
                 // He's using a berry
                 await ThrowBerry();
+
+                // We always need to update the inventory
+                await GameClient.UpdateInventory();
+                SelectedCaptureItem = SelectAvailablePokeBall();
+
+                Busy.SetBusy(false);
+                if (SelectedCaptureItem.Count != 0)
+                    PokeballButtonEnabled = true;
             }
-            // Update selected item to get the new item count
-            if (SelectedCaptureItem != null)
-                SelectedCaptureItem = ItemsInventory.First(item => item.ItemId == SelectedCaptureItem.ItemId);
             Busy.SetBusy(false);
+            LastItemUsed = null;
         }, hitPokemon => true));
+
+        private ulong _capturedPokemonId;
 
         /// <summary>
         ///     Launches the PokeBall for the current encounter, handling the different catch responses
@@ -389,7 +426,8 @@ namespace PokemonGo_UWP.ViewModels
             var requestTime = DateTime.Now;
             var caughtPokemonResponse = await GameClient.CatchPokemon(CurrentPokemon.EncounterId, CurrentPokemon.SpawnpointId, SelectedCaptureItem.ItemId, hitPokemon);
             var responseDelay = DateTime.Now - requestTime;
-            if (responseDelay.TotalSeconds < 5) await Task.Delay(TimeSpan.FromSeconds(5 - (int) responseDelay.TotalSeconds));
+            if (responseDelay.TotalSeconds < 5)
+                await Task.Delay(TimeSpan.FromSeconds(5 - (int) responseDelay.TotalSeconds));
             var nearbyPokemon = GameClient.NearbyPokemons.FirstOrDefault(pokemon => pokemon.EncounterId == CurrentPokemon.EncounterId);
 
             switch (caughtPokemonResponse.Status)
@@ -398,20 +436,24 @@ namespace PokemonGo_UWP.ViewModels
                     Logger.Write("CatchError!");
                     // TODO: what can we do?
                     break;
+
                 case CatchPokemonResponse.Types.CatchStatus.CatchSuccess:
                     Logger.Write($"We caught {CurrentPokemon.PokemonId}");
                     CurrentCaptureAward = caughtPokemonResponse.CaptureAward;
                     CatchSuccess?.Invoke(this, null);
+                    _capturedPokemonId = caughtPokemonResponse.CapturedPokemonId;
                     if (CurrentPokemon is MapPokemonWrapper)
                         GameClient.CatchablePokemons.Remove((MapPokemonWrapper) CurrentPokemon);
                     else
                         GameClient.LuredPokemons.Remove((LuredPokemon) CurrentPokemon);
                     GameClient.NearbyPokemons.Remove(nearbyPokemon);
-                    break;
+                    return;
+
                 case CatchPokemonResponse.Types.CatchStatus.CatchEscape:
                     Logger.Write($"{CurrentPokemon.PokemonId} escaped");
                     CatchEscape?.Invoke(this, null);
                     break;
+
                 case CatchPokemonResponse.Types.CatchStatus.CatchFlee:
                     Logger.Write($"{CurrentPokemon.PokemonId} fled");
                     CatchFlee?.Invoke(this, null);
@@ -423,34 +465,37 @@ namespace PokemonGo_UWP.ViewModels
                     // We just go back because there's nothing else to do
                     GameClient.ToggleUpdateTimer();
                     break;
+
                 case CatchPokemonResponse.Types.CatchStatus.CatchMissed:
                     Logger.Write($"We missed {CurrentPokemon.PokemonId}");
                     break;
+
                 default:
                     throw new ArgumentOutOfRangeException();
             }
-            // We always need to update the inventory
-            await GameClient.UpdateInventory();
-            SelectStartingBall(true);
+
+            if (SelectedCaptureItem.Count != 0)
+                PokeballButtonEnabled = true;
         }
 
         /// <summary>
-        ///     Uses the selected berry for the current encounter        
+        ///     Uses the selected berry for the current encounter
         /// </summary>
         /// <returns></returns>
-        public async Task ThrowBerry()
+        private async Task ThrowBerry()
         {
-            Logger.Write($"Used {SelectedCaptureItem}. Remaining: {SelectedCaptureItem.Count}");
-            var berryResult = await GameClient.UseCaptureItem(CurrentPokemon.EncounterId, CurrentPokemon.SpawnpointId, SelectedCaptureItem.ItemId);
-            if (berryResult.Success)
+            Logger.Write($"Used {LastItemUsed}.");
+
+            var berryResponse = await GameClient.UseCaptureItem(CurrentPokemon.EncounterId, CurrentPokemon.SpawnpointId, LastItemUsed ?? ItemId.ItemRazzBerry);
+            if (berryResponse.Success)
             {
                 // TODO: visual feedback
                 // TODO: do we need to handle the returned values or are they needed just to animate the 3d model?
-                Logger.Write($"Success when using {SelectedCaptureItem}.");
+                Logger.Write($"Success when using {LastItemUsed}.");
                 BerrySuccess?.Invoke(this, null);
-                await new MessageDialog($"Used {SelectedCaptureItem.ItemId}", "").ShowAsyncQueue();
-                SelectStartingBall();
             }
+            else
+                Logger.Write($"Failure when using {LastItemUsed}.");
         }
 
         #endregion

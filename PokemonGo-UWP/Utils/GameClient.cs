@@ -30,7 +30,6 @@ using POGOProtos.Settings.Master;
 using Q42.WinRT.Data;
 using Template10.Common;
 using Template10.Utils;
-using Universal_Authenticator_v2.Views;
 using Windows.Devices.Sensors;
 using Newtonsoft.Json;
 using PokemonGo.RocketAPI.Rpc;
@@ -38,6 +37,8 @@ using PokemonGoAPI.Session;
 using PokemonGo_UWP.Utils.Helpers;
 using System.Collections.Specialized;
 using Windows.UI.Popups;
+using System.ComponentModel;
+using PokemonGo_UWP.Views;
 
 namespace PokemonGo_UWP.Utils
 {
@@ -87,7 +88,7 @@ namespace PokemonGo_UWP.Utils
 
 
                 //Collect location data for signature
-                DeviceInfos.Instance.CollectLocationData();
+                DeviceInfos.Current.CollectLocationData();
 
                 // We have no settings yet so we just update without further checks
                 if (GameSetting == null)
@@ -225,6 +226,12 @@ namespace PokemonGo_UWP.Utils
         ///     Collection of Pokestops in the current area
         /// </summary>
         public static ObservableCollection<FortDataWrapper> NearbyPokestops { get; set; } =
+            new ObservableCollection<FortDataWrapper>();
+
+        /// <summary>
+        ///     Collection of Gyms in the current area
+        /// </summary>
+        public static ObservableCollection<FortDataWrapper> NearbyGyms { get; set; } =
             new ObservableCollection<FortDataWrapper>();
 
         /// <summary>
@@ -368,11 +375,12 @@ namespace PokemonGo_UWP.Utils
                 GooglePassword = SettingsService.Instance.LastLoginService == AuthType.Google ? credentials.Password : null,
             };
 
-            _client = new Client(_clientSettings, null, DeviceInfos.Instance) {AccessToken = LoadAccessToken()};
+            _client = new Client(_clientSettings, null, DeviceInfos.Current) {AccessToken = LoadAccessToken()};
             var apiFailureStrategy = new ApiFailureStrategy(_client);
             _client.ApiFailure = apiFailureStrategy;
             // Register to AccessTokenChanged
             apiFailureStrategy.OnAccessTokenUpdated += (s, e) => SaveAccessToken();
+            apiFailureStrategy.OnFailureToggleUpdateTimer += ToggleUpdateTimer;
             try
             {
                 await _client.Login.DoLogin();
@@ -382,6 +390,7 @@ namespace PokemonGo_UWP.Utils
                 if (e is PokemonGo.RocketAPI.Exceptions.AccessTokenExpiredException)
                 {
                     Debug.WriteLine("AccessTokenExpired Exception caught");
+                    _client.AccessToken.Expire();
                     await _client.Login.DoLogin();
                 }
                 else
@@ -405,7 +414,7 @@ namespace PokemonGo_UWP.Utils
                 PtcPassword = password,
                 AuthType = AuthType.Ptc
             };
-            _client = new Client(_clientSettings, null, DeviceInfos.Instance);
+            _client = new Client(_clientSettings, null, DeviceInfos.Current);
             var apiFailureStrategy = new ApiFailureStrategy(_client);
             _client.ApiFailure = apiFailureStrategy;
             // Register to AccessTokenChanged
@@ -438,7 +447,7 @@ namespace PokemonGo_UWP.Utils
                 AuthType = AuthType.Google
             };
 
-            _client = new Client(_clientSettings, null, DeviceInfos.Instance);
+            _client = new Client(_clientSettings, null, DeviceInfos.Current);
             var apiFailureStrategy = new ApiFailureStrategy(_client);
             _client.ApiFailure = apiFailureStrategy;
             // Register to AccessTokenChanged
@@ -470,54 +479,67 @@ namespace PokemonGo_UWP.Utils
                 _geolocator.PositionChanged -= GeolocatorOnPositionChanged;
             _geolocator = null;
             _lastGeopositionMapObjectsRequest = null;
-            CatchablePokemons?.Clear();
-            NearbyPokemons?.Clear();
-            NearbyPokestops?.Clear();
         }
 
         #endregion
 
         #region Data Updating
-
         private static Geolocator _geolocator;
         private static Compass _compass;
 
         public static Geoposition Geoposition { get; private set; }
 
         private static Heartbeat _heartbeat;
-        private static DispatcherTimer _compassTimer;
+
+        public static event EventHandler<GetHatchedEggsResponse> OnEggHatched;
 
         /// <summary>
         ///     We fire this event when the current position changes
         /// </summary>
         public static event EventHandler<Geoposition> GeopositionUpdated;
-
+        #region Compass Stuff
+        /// <summary>
+        /// We fire this event when the current compass position changes
+        /// </summary>
         public static event EventHandler<CompassReading> HeadingUpdated;
-
+        private static void compass_ReadingChanged(Compass sender, CompassReadingChangedEventArgs args)
+        {
+            HeadingUpdated?.Invoke(sender, args.Reading);
+        }
+        #endregion
         /// <summary>
         ///     Starts the timer to update map objects and the handler to update position
         /// </summary>
         public static async Task InitializeDataUpdate()
         {
-            if (SettingsService.Instance.IsCompassEnabled)
+            LoadingScreen.SetBusy(true);
+            #region Compass management
+            SettingsService.Instance.PropertyChanged += (object sender, PropertyChangedEventArgs e) =>
             {
-                _compass = Compass.GetDefault();
-                if (_compass != null)
+                if (e.PropertyName == nameof(SettingsService.Instance.MapAutomaticOrientationMode))
                 {
-                    _compassTimer = new DispatcherTimer
+                    switch (SettingsService.Instance.MapAutomaticOrientationMode)
                     {
-                        Interval = TimeSpan.FromMilliseconds(Math.Max(_compass.MinimumReportInterval, 50))
-                    };
-                    _compassTimer.Tick += (s, e) =>
-                    {
-                        if (SettingsService.Instance.IsAutoRotateMapEnabled)
-                        {
-                            HeadingUpdated?.Invoke(null, _compass.GetCurrentReading());
-                        }
-                    };
-                    _compassTimer.Start();
+                        case MapAutomaticOrientationModes.Compass:
+                            _compass = Compass.GetDefault();
+                            _compass.ReportInterval = Math.Max(_compass.MinimumReportInterval, 50);
+                            _compass.ReadingChanged += compass_ReadingChanged;
+                            break;
+                        case MapAutomaticOrientationModes.None:
+                        case MapAutomaticOrientationModes.GPS:
+                        default:
+                            if (_compass != null)
+                            {
+                                _compass.ReadingChanged -= compass_ReadingChanged;
+                                _compass = null;
+                            }
+                            break;
+                    }
                 }
-            }
+            };
+            //Trick to trigger the PropertyChanged for MapAutomaticOrientationMode ;)
+            SettingsService.Instance.MapAutomaticOrientationMode = SettingsService.Instance.MapAutomaticOrientationMode;
+            #endregion
             _geolocator = new Geolocator
             {
                 DesiredAccuracy = PositionAccuracy.High,
@@ -526,7 +548,7 @@ namespace PokemonGo_UWP.Utils
                 MovementThreshold = 5
             };
 
-            Busy.SetBusy(true, Resources.CodeResources.GetString("GettingGpsSignalText"));
+            LoadingScreen.SetBusy(true, Resources.CodeResources.GetString("GettingGpsSignalText"));
             Geoposition = Geoposition ?? await _geolocator.GetGeopositionAsync();
             GeopositionUpdated?.Invoke(null, Geoposition);
             _geolocator.PositionChanged += GeolocatorOnPositionChanged;
@@ -541,11 +563,11 @@ namespace PokemonGo_UWP.Utils
                 _heartbeat = new Heartbeat();
             await _heartbeat.StartDispatcher();
             // Update before starting timer
-            Busy.SetBusy(true, Resources.CodeResources.GetString("GettingUserDataText"));
+            LoadingScreen.SetBusy(true, Resources.CodeResources.GetString("GettingUserDataText"));
             //await UpdateMapObjects();
             await UpdateInventory();
             await UpdateItemTemplates();
-            Busy.SetBusy(false);
+            LoadingScreen.SetBusy(false);
         }
 
         private static async void GeolocatorOnPositionChanged(Geolocator sender, PositionChangedEventArgs args)
@@ -554,7 +576,7 @@ namespace PokemonGo_UWP.Utils
             // Updating player's position
             var position = Geoposition.Coordinate.Point.Position;
             if (_client != null)
-                await _client.Player.UpdatePlayerLocation(position.Latitude, position.Longitude, position.Altitude);
+                await _client.Player.UpdatePlayerLocation(position.Latitude, position.Longitude, Geoposition.Coordinate.Accuracy);
             GeopositionUpdated?.Invoke(null, Geoposition);
         }
 
@@ -569,6 +591,7 @@ namespace PokemonGo_UWP.Utils
         /// <param name="isEnabled"></param>
         public static async void ToggleUpdateTimer(bool isEnabled = true)
         {
+            Logger.Write($"Called ToggleUpdateTimer({isEnabled})");
             if (isEnabled)
                 await _heartbeat.StartDispatcher();
             else
@@ -600,19 +623,59 @@ namespace PokemonGo_UWP.Utils
             // for this collection the ordering is important, so we follow a slightly different update mechanism
             NearbyPokemons.UpdateByIndexWith(newNearByPokemons, x => new NearbyPokemonWrapper(x));
 
-            // update poke stops on map (gyms are ignored for now)
+            // update poke stops on map
             var newPokeStops = mapObjects.Item1.MapCells
                 .SelectMany(x => x.Forts)
                 .Where(x => x.Type == FortType.Checkpoint)
-                .ToArray();            
+                .ToArray();
             Logger.Write($"Found {newPokeStops.Length} nearby PokeStops");
             NearbyPokestops.UpdateWith(newPokeStops, x => new FortDataWrapper(x), (x, y) => x.Id == y.Id);
+
+            // update gyms on map
+            var newGyms = mapObjects.Item1.MapCells
+                .SelectMany(x => x.Forts)
+                .Where(x => x.Type == FortType.Gym)
+                .ToArray();
+            Logger.Write($"Found {newGyms.Length} nearby Gyms");
+            // For now, we do not show the gyms on the map, as they are not complete yet. Code remains, so we can still work on it.
+            //NearbyGyms.UpdateWith(newGyms, x => new FortDataWrapper(x), (x, y) => x.Id == y.Id);
 
             // Update LuredPokemon
             var newLuredPokemon = newPokeStops.Where(item => item.LureInfo != null).Select(item => new LuredPokemon(item.LureInfo, item.Latitude, item.Longitude)).ToArray();
             Logger.Write($"Found {newLuredPokemon.Length} lured Pokemon");
             LuredPokemons.UpdateByIndexWith(newLuredPokemon, x => x);
             Logger.Write("Finished updating map objects");
+
+            // Update Hatched Eggs
+            var hatchedEggResponse = mapObjects.Item2;
+            if (hatchedEggResponse.Success)
+            {
+                //OnEggHatched?.Invoke(null, hatchedEggResponse);
+
+                for (var i = 0; i < hatchedEggResponse.PokemonId.Count; i++)
+                {
+                    Logger.Write("Egg Hatched");
+                    await UpdateInventory();
+
+                    //TODO: Fix hatching of more than one pokemon at a time
+                    var currentPokemon = PokemonsInventory
+                        .FirstOrDefault(item => item.Id == hatchedEggResponse.PokemonId[i]);
+
+                    if(currentPokemon == null)
+                        continue;
+
+                    await
+                        new MessageDialog(string.Format(
+                            Resources.CodeResources.GetString("EggHatchMessage"),
+                            currentPokemon.PokemonId, hatchedEggResponse.StardustAwarded[i], hatchedEggResponse.CandyAwarded[i],
+                            hatchedEggResponse.ExperienceAwarded[i])).ShowAsyncQueue();
+
+                    NavigationHelper.NavigationState["CurrentPokemon"] =
+                        new PokemonDataWrapper(currentPokemon);
+                    BootStrapper.Current.NavigationService.Navigate(typeof(PokemonDetailPage));
+
+                }
+            }
         }
 
         #endregion
@@ -644,7 +707,7 @@ namespace PokemonGo_UWP.Utils
         /// <summary>
         ///     List of items that can be used when trying to catch a Pokemon
         /// </summary>
-        private static readonly List<ItemId> CatchItemIds = new List<ItemId>
+        public static readonly List<ItemId> CatchItemIds = new List<ItemId>
         {
             ItemId.ItemPokeBall,
             ItemId.ItemGreatBall,
@@ -655,6 +718,24 @@ namespace PokemonGo_UWP.Utils
             ItemId.ItemRazzBerry,
             ItemId.ItemUltraBall,
             ItemId.ItemWeparBerry
+        };
+
+        /// <summary>
+        /// List of items, that can be used from the normal ItemsInventoryPage
+        /// </summary>
+        public static readonly List<ItemId> NormalUseItemIds = new List<ItemId>
+        {
+            ItemId.ItemPotion,
+            ItemId.ItemSuperPotion,
+            ItemId.ItemHyperPotion,
+            ItemId.ItemMaxPotion,
+            ItemId.ItemRevive,
+            ItemId.ItemMaxRevive,
+            ItemId.ItemLuckyEgg,
+            ItemId.ItemIncenseOrdinary,
+            ItemId.ItemIncenseSpicy,
+            ItemId.ItemIncenseCool,
+            ItemId.ItemIncenseFloral,
         };
 
         /// <summary>
@@ -682,6 +763,7 @@ namespace PokemonGo_UWP.Utils
             {
                 PlayerStats = tmpStats;
                 var levelUpResponse = await GetLevelUpRewards(tmpStats.Level);
+                await UpdateInventory();
                 return levelUpResponse;
             }
             PlayerStats = tmpStats;
@@ -873,7 +955,7 @@ namespace PokemonGo_UWP.Utils
 
         #endregion
 
-        #region Power Up & Evolving & Transfer
+        #region Power Up & Evolving & Transfer & Favorite
 
         /// <summary>
         ///
@@ -905,6 +987,24 @@ namespace PokemonGo_UWP.Utils
             return await _client.Inventory.TransferPokemon(pokemonId);
         }
 
+        /// <summary>
+        /// Favourites/Unfavourites the Pokemon
+        /// </summary>
+        /// <param name="pokemonId"></param>
+        /// <param name="isFavorite"></param>
+        /// <returns></returns>
+        public static async Task<SetFavoritePokemonResponse> SetFavoritePokemon(ulong pokemonId, bool isFavorite)
+        {
+            // Cast ulong to long... because Niantic is a bunch of retarded idiots...
+            long pokeId = (long)pokemonId;
+            return await _client.Inventory.SetFavoritePokemon(pokeId, isFavorite);
+        }
+
+        public static async Task<NicknamePokemonResponse> SetPokemonNickName(ulong pokemonId, string nickName)
+        {
+            return await _client.Inventory.NicknamePokemon(pokemonId, nickName);
+        }
+
         #endregion
 
         #endregion
@@ -933,6 +1033,43 @@ namespace PokemonGo_UWP.Utils
         public static async Task<FortSearchResponse> SearchFort(string pokestopId, double latitude, double longitude)
         {
             return await _client.Fort.SearchFort(pokestopId, latitude, longitude);
+        }
+
+        #endregion
+
+        #region Gym Handling
+
+        /// <summary>
+        ///     Gets the details for the given Gym
+        /// </summary>
+        /// <param name="gymid"></param>
+        /// <param name="latitude"></param>
+        /// <param name="longitude"></param>
+        /// <returns></returns>
+        public static async Task<GetGymDetailsResponse> GetGymDetails(string gymid, double latitude, double longitude)
+        {
+            return await _client.Fort.GetGymDetails(gymid, latitude, longitude);
+        }
+
+        /// The following _client.Fort methods need implementation:
+        /// FortDeployPokemon
+        /// FortRecallPokemon
+        /// StartGymBattle
+        /// AttackGym
+
+        #endregion
+
+        #region Items Handling
+
+        /// <summary>
+        ///     Recycles the given amount of the selected item
+        /// </summary>
+        /// <param name="item"></param>
+        /// <param name="amount"></param>
+        /// <returns></returns>
+        public static async Task<RecycleInventoryItemResponse> RecycleItem(ItemId item, int amount)
+        {
+            return await _client.Inventory.RecycleItem(item, amount);
         }
 
         #endregion

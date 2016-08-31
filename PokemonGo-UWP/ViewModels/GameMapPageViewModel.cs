@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 using Windows.Devices.Geolocation;
+using Windows.UI.Core;
 using Windows.UI.Popups;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Navigation;
@@ -20,6 +21,8 @@ using Template10.Mvvm;
 using Resources = PokemonGo_UWP.Utils.Resources;
 using POGOProtos.Enums;
 using POGOProtos.Map.Pokemon;
+using Google.Protobuf;
+using PokemonGo_UWP.Controls;
 
 namespace PokemonGo_UWP.ViewModels
 {
@@ -70,14 +73,20 @@ namespace PokemonGo_UWP.ViewModels
             if (parameter == null || mode == NavigationMode.Back) return;
             var gameMapNavigationMode = (GameMapNavigationModes)parameter;
 
+            AudioUtils.PlaySound(AudioUtils.GAMEPLAY);
+
             // We just resumed from suspension so we restart update service and we get data from suspension state
             if (suspensionState.Any())
             {
                 // Recovering the state
-                PlayerProfile = JsonConvert.DeserializeObject<PlayerData>((string)suspensionState[nameof(PlayerProfile)]);
-                PlayerStats = JsonConvert.DeserializeObject<PlayerStats>((string)suspensionState[nameof(PlayerStats)]);
+                PlayerProfile = new PlayerData();
+                PlayerStats = new PlayerStats();
+                PlayerProfile.MergeFrom(ByteString.FromBase64((string)suspensionState[nameof(PlayerProfile)]).CreateCodedInput());
+                PlayerStats.MergeFrom(ByteString.FromBase64((string)suspensionState[nameof(PlayerStats)]).CreateCodedInput());
                 // Restarting update service
+                await GameClient.InitializeClient();
                 await StartGpsDataService();
+                GameClient.ToggleUpdateTimer();
                 return;
             }
 
@@ -117,9 +126,9 @@ namespace PokemonGo_UWP.ViewModels
         public override async Task OnNavigatedFromAsync(IDictionary<string, object> suspensionState, bool suspending)
         {
             if (suspending)
-            {
-                suspensionState[nameof(PlayerProfile)] = JsonConvert.SerializeObject(PlayerProfile);
-                suspensionState[nameof(PlayerStats)] = JsonConvert.SerializeObject(PlayerStats);
+            {                
+                suspensionState[nameof(PlayerProfile)] = PlayerProfile.ToByteString().ToBase64();
+                suspensionState[nameof(PlayerStats)] = PlayerStats.ToByteString().ToBase64();
             }
             await Task.CompletedTask;
         }
@@ -211,6 +220,11 @@ namespace PokemonGo_UWP.ViewModels
         /// </summary>
         public static ObservableCollection<FortDataWrapper> NearbyPokestops => GameClient.NearbyPokestops;
 
+        /// <summary>
+        ///     Collection of Gyms in the current area
+        /// </summary>
+        public static ObservableCollection<FortDataWrapper> NearbyGyms => GameClient.NearbyGyms;
+
         #endregion
 
         #region Game Logic
@@ -247,7 +261,7 @@ namespace PokemonGo_UWP.ViewModels
                         BootStrapper.Current.Exit();
                         break;
                 }
-            });
+            }, 0, CoreDispatcherPriority.High);
         }
 
 
@@ -320,6 +334,13 @@ namespace PokemonGo_UWP.ViewModels
                 _gotoPlayerProfilePage ??
                 (_gotoPlayerProfilePage =
                     new DelegateCommand(() => { NavigationService.Navigate(typeof(PlayerProfilePage), true); }));
+
+        private DelegateCommand _gotoPokedexPage;
+        public DelegateCommand GotoPokedexPageCommand
+            =>
+                _gotoPokedexPage ??
+                (_gotoPokedexPage =
+                    new DelegateCommand(() => { NavigationService.Navigate(typeof(PokedexPage)); }));
 
         #endregion
 

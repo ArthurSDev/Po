@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 using Windows.UI.Xaml.Navigation;
+using Google.Protobuf;
 using Newtonsoft.Json;
 using PokemonGo.RocketAPI;
 using PokemonGo_UWP.Entities;
@@ -32,8 +33,9 @@ namespace PokemonGo_UWP.ViewModels
             if (suspensionState.Any())
             {
                 // Recovering the state
+                SelectedEggIncubator = new EggIncubator();
                 CurrentEgg = JsonConvert.DeserializeObject<PokemonDataWrapper>((string)suspensionState[nameof(CurrentEgg)]);
-                SelectedEggIncubator = JsonConvert.DeserializeObject<EggIncubator>((string)suspensionState[nameof(SelectedEggIncubator)]);
+                SelectedEggIncubator.MergeFrom(ByteString.FromBase64((string)suspensionState[nameof(SelectedEggIncubator)]).CreateCodedInput());                
             }
             else
             {
@@ -54,7 +56,7 @@ namespace PokemonGo_UWP.ViewModels
             if (suspending)
             {
                 suspensionState[nameof(CurrentEgg)] = JsonConvert.SerializeObject(CurrentEgg);
-                suspensionState[nameof(SelectedEggIncubator)] = JsonConvert.SerializeObject(SelectedEggIncubator);
+                suspensionState[nameof(SelectedEggIncubator)] = SelectedEggIncubator.ToByteString().ToBase64();                
             }
             await Task.CompletedTask;
         }

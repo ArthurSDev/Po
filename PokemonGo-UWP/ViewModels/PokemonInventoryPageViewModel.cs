@@ -23,6 +23,15 @@ namespace PokemonGo_UWP.ViewModels
         ///     Egg selected for incubation
         /// </summary>
         private PokemonData _selectedEgg;
+        private int _lastVisibleIndex;
+
+        public int LastVisibleIndex
+        {
+            get { return Utilities.EnsureRange(_lastVisibleIndex, 0, PokemonInventory.Count-1); }
+            set { _lastVisibleIndex = value; }
+        }
+
+        public Action ResetView;
 
         #endregion
 
@@ -57,7 +66,7 @@ namespace PokemonGo_UWP.ViewModels
                                                               .OrderBy(c => c.EggKmWalkedTarget);
                 var incubatedEggs = GameClient.EggsInventory.Where(o => !string.IsNullOrEmpty(o.EggIncubatorId))
                                                               .OrderBy(c => c.EggKmWalkedTarget);
-                EggsInventory.Clear();                
+                EggsInventory.Clear();
                 // advancedrei: I have verified this is the sort order in the game.
                 foreach (var incubatedEgg in incubatedEggs)
                 {
@@ -69,6 +78,9 @@ namespace PokemonGo_UWP.ViewModels
                 {
                     EggsInventory.Add(new PokemonDataWrapper(pokemonData));
                 }
+
+                if(mode == NavigationMode.Back)
+                    ResetView?.Invoke();
             }
 
             await Task.CompletedTask;
@@ -163,6 +175,7 @@ namespace PokemonGo_UWP.ViewModels
 
         #region Pokemon Inventory Handling
 
+
         private void UpdateSorting()
         {
             PokemonInventory =
@@ -187,15 +200,15 @@ namespace PokemonGo_UWP.ViewModels
                     return pokemonInventory.OrderByDescending(pokemon => pokemon.CreationTimeMs);
                 case PokemonSortingModes.Fav:
                     return pokemonInventory.OrderByDescending(pokemon => pokemon.Favorite)
-                         .ThenByDescending(pokemon => pokemon.Cp); 
+                         .ThenByDescending(pokemon => pokemon.Cp);
                 case PokemonSortingModes.Number:
                     return pokemonInventory.OrderBy(pokemon => pokemon.PokemonId)
-                         .ThenByDescending(pokemon => pokemon.Cp); 
+                         .ThenByDescending(pokemon => pokemon.Cp);
                 case PokemonSortingModes.Health:
                     return pokemonInventory.OrderByDescending(pokemon => pokemon.Stamina)
                         .ThenByDescending(pokemon => pokemon.Cp);
                 case PokemonSortingModes.Name:
-                    return pokemonInventory.OrderBy(pokemon => Resources.Pokemon.GetString(pokemon.PokemonId.ToString()))
+                    return pokemonInventory.OrderBy(pokemon =>pokemon.Name)
                             .ThenByDescending(pokemon => pokemon.Cp);
                 case PokemonSortingModes.Combat:
                     return pokemonInventory.OrderByDescending(pokemon => pokemon.Cp)

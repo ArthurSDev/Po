@@ -8,7 +8,7 @@ namespace PokemonGo_UWP.Utils
 {
     public static class ApplicationKeys
     {
-        public static string MapServiceToken = zfxYUhqDCDe1HmPNylar~_ZS7RPaOX4H0KwwGFYGKPg~ApneKarrGxbboX2YvtM44vod0vki-ZQ17xlyVj3v9moEkdlXpFkvKVUcDWL0yXXO;
+        public static string MapServiceToken = "DsXd8ATmuk3hMFadAkNa~_G-S8ObjnOogOIJ1e-ukEQ~AiEK_qNyTP0lEen86-EIgpTkH2E1Vf2_uRZ3nSQuMFo_1zsOOOVK-qQ-gqs_83-m";
         public static string HockeyAppToken = null;
         public static string[] MapBoxTokens = {};
         public static string[] MapBoxStylesLight = {};

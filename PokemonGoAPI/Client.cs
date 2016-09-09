@@ -84,7 +84,7 @@ namespace PokemonGo.RocketAPI
             Misc = new Misc(this);
             DeviceInfo = deviceInfo;
 
-            Player.SetCoordinates(Settings.-12.262770, Settings.-38.968323, Settings.DefaultAccuracy);
+            Player.SetCoordinates(Settings.DefaultLatitude, Settings.DefaultLongitude, Settings.DefaultAccuracy);
         }
 
         #endregion

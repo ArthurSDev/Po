@@ -42,6 +42,7 @@
   </data>
   <data name="NoGpsPermissionsText" xml:space="preserve">
     <value>Precisamos de permissão para usar o GPS no jogo, por favor, ative-o e tente novamente.</value>
+    var dialog = new MessageDialog("Sem sinal de GPS. Deseja tentar novamente?", "NoGpsPermissionsText");
   </data>
   <data name="PokemonRanAwayText" xml:space="preserve">
     <value>O Pokémon fugiu, sinto muito :(</value>

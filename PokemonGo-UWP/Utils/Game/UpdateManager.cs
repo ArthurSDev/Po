@@ -31,11 +31,6 @@ namespace PokemonGo_UWP.Utils
         {
             try
             {
-                if (Debugger.IsAttached)
-                {
-                    return new UpdateInfo(UpdateStatus.NoUpdate);
-                }
-
                 //clean update folder on backgraound, dont bother with result - we are ready for collisions
                 var t1 = CleanTemporaryUpdateFolderAsync();
 
@@ -55,6 +50,16 @@ namespace PokemonGo_UWP.Utils
                         }
                     }
                 }
+
+                if (Debugger.IsAttached)
+                {
+                    return new UpdateInfo(UpdateStatus.NoUpdate);
+                }
+#if DEBUG
+                // For debugging purposes we dont check version now
+                return new UpdateInfo(UpdateStatus.NoUpdate);
+#endif
+
 
                 // Check if version is newer
                 var currentVersion = Package.Current.Id.Version;

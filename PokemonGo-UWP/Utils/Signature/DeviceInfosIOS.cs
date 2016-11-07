@@ -1,4 +1,5 @@
 ﻿using PokemonGo.RocketAPI.Helpers;
+using PokemonGo_UWP.Utils.Helpers;
 using Superbest_random;
 using System;
 using System.Collections.Generic;
@@ -13,7 +14,7 @@ namespace PokemonGo_UWP.Utils
     /// <summary>
     /// Device infos used to sign requests
     /// </summary>
-    public class DeviceInfosIOS : IDeviceInfoExtended
+    public class DeviceInfosIOS : DeviceInfoBase, IDeviceInfoExtended
     {
 
         public DeviceInfosIOS()
@@ -96,10 +97,6 @@ namespace PokemonGo_UWP.Utils
 
         public string Platform => "IOS";
 
-        public int Version => 3300;
-
-        public long TimeSnapshot => DeviceInfos.RelativeTimeFromStart;
-
 
         //IOS doe not use sattelites info
         private IGpsSattelitesInfo[] _gpsSattelitesInfo = new IGpsSattelitesInfo[0];
@@ -110,16 +107,38 @@ namespace PokemonGo_UWP.Utils
 
         private class ActivityStatusIOS : IActivityStatus
         {
-            public bool Stationary => true;
-            public bool Tilting => GameClient.Geoposition?.Coordinate?.Speed < 3 ? true : false;
-            public bool Walking => GameClient.Geoposition?.Coordinate?.Speed > 3 && GameClient.Geoposition.Coordinate?.Speed > 7 ? true : false;
-            public bool Automotive => GameClient.Geoposition?.Coordinate?.Speed > 20 ? true : false;
-
-            public bool Cycling => false;
-
+            public bool Automotive => false;
+            public bool Cycling => LocationServiceHelper.Instance.Geoposition?.Coordinate?.Speed > 3.33333;
             public bool Running => false;
+            public bool Stationary => LocationServiceHelper.Instance.Geoposition?.Coordinate?.Speed < 0.2;
+            public bool Tilting => Utilities.Rand.NextBoolean();
+            public bool Walking => false;
 
+            //#region Private Members
 
+            //private const double stationaryMax = 0.2;   // .44 MPH (to account for GPS drift)
+            //private const double tiltingMax = 0.33528;  // 3/4 MPH
+            //private const double walkingMax = 3;  // 6.7 MPH
+            //private const double runningMax = 6;  // 13.4 MPH
+            //private const double cyclingMax = 15;   // 33 MPH, this is the speed when the "driving" dialog pops up.
+
+            //#endregion
+
+            //#region Properties
+
+            //public bool Automotive => LocationHelper.Instance.Geoposition?.Coordinate?.Speed > cyclingMax;
+
+            //public bool Cycling => LocationHelper.Instance.Geoposition?.Coordinate?.Speed > runningMax && LocationHelper.Instance.Geoposition.Coordinate?.Speed <= cyclingMax;
+
+            //public bool Running => LocationHelper.Instance.Geoposition?.Coordinate?.Speed > walkingMax && LocationHelper.Instance.Geoposition.Coordinate?.Speed <= runningMax;
+
+            //public bool Stationary => LocationHelper.Instance.Geoposition?.Coordinate?.Speed <= stationaryMax;
+
+            //public bool Tilting => LocationHelper.Instance.Geoposition?.Coordinate?.Speed > stationaryMax && LocationHelper.Instance.Geoposition.Coordinate?.Speed <= tiltingMax;
+
+            //public bool Walking => LocationHelper.Instance.Geoposition?.Coordinate?.Speed > tiltingMax && LocationHelper.Instance.Geoposition.Coordinate?.Speed <= walkingMax;
+
+            //#endregion
         }
 
 
@@ -183,12 +202,12 @@ namespace PokemonGo_UWP.Utils
 
             public static ILocationFix CollectData()
             {
-                if (GameClient.Geoposition.Coordinate == null)
+                if (LocationServiceHelper.Instance.Geoposition?.Coordinate == null)
                     return null; //Nothing to collect
 
                 LocationFixIOS loc = new LocationFixIOS();
                 //Collect provider
-                switch (GameClient.Geoposition.Coordinate.PositionSource)
+                switch (LocationServiceHelper.Instance.Geoposition?.Coordinate.PositionSource)
                 {
                     case Windows.Devices.Geolocation.PositionSource.WiFi:
                     case Windows.Devices.Geolocation.PositionSource.Cellular:
@@ -202,9 +221,9 @@ namespace PokemonGo_UWP.Utils
 
                 //Collect coordinates
 
-                loc.Latitude = (float)GameClient.Geoposition.Coordinate.Point.Position.Latitude;
-                loc.Longitude = (float)GameClient.Geoposition.Coordinate.Point.Position.Longitude;
-                loc.Altitude = (float)GameClient.Geoposition.Coordinate.Point.Position.Altitude;
+                loc.Latitude = (float)LocationServiceHelper.Instance.Geoposition.Coordinate.Point.Position.Latitude;
+                loc.Longitude = (float)LocationServiceHelper.Instance.Geoposition.Coordinate.Point.Position.Longitude;
+                loc.Altitude = (float)LocationServiceHelper.Instance.Geoposition.Coordinate.Point.Position.Altitude;
 
                 //Not filled on iOS
                 //loc.Floor = 3;
@@ -214,9 +233,9 @@ namespace PokemonGo_UWP.Utils
 
                 loc.TimeSnapshot = DeviceInfos.RelativeTimeFromStart;
 
-                loc.HorizontalAccuracy = (float?)GameClient.Geoposition.Coordinate?.Accuracy ?? (float)_random.NextDouble(5.0, 50.0);
+                loc.HorizontalAccuracy = (float?)LocationServiceHelper.Instance.Geoposition.Coordinate?.Accuracy ?? (float)_random.NextDouble(5.0, 50.0);
 
-                loc.VerticalAccuracy = (float?)GameClient.Geoposition.Coordinate?.AltitudeAccuracy ?? (float)_random.NextDouble(10.0, 30.0);
+                loc.VerticalAccuracy = (float?)LocationServiceHelper.Instance.Geoposition.Coordinate?.AltitudeAccuracy ?? (float)_random.NextDouble(10.0, 30.0);
 
                 loc.Course = -1.0f;
 
